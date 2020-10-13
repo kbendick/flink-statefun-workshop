@@ -2,8 +2,8 @@
 
 ## Setup Instructions
 
-The following instructions guide you through the process of setting up a development environment for the purpose of developing,
-debugging, and executing solutions for the workshop.
+The following instructions guide you through the process of setting up a development environment for developing,
+debugging and executing solutions for the workshop.
 
 ### Software Requirements
 
@@ -15,7 +15,7 @@ The following software is required for running the code for this workshop:
 * Git
 * Docker
 
-For the exercises described below you will also need a text editor for making (minor) modifications to the Python code, and `curl` for using the REST api.
+For the exercises described below, you will also need a text editor for making (minor) modifications to the Python code, and `curl` for using the REST API.
 
 ### Clone and Prepare the Software
 
@@ -25,54 +25,31 @@ $ cd flink-statefun-workshop
 $ docker-compose build
 ```
 
-If you haven’t done this before, at this point you’ll end up downloading all of the dependencies for this project and its Docker image.
+If you haven't done this before, at this point, you'll end up downloading all of the dependencies for this project and its Docker image.
 This usually takes a few minutes, depending on the speed of your internet connection.
 
 ### Get it Running
 
 ```bash
-$ docker-compose up
+$ docker-compose up -d 
 ```
 
-This should produce a lot of output, but after a minute or so you should start to see messages like this,
-interspersed with occasional messages about checkpointing:
+This will start all the cluster components.
+Once everything is up and running, after a minute or so you should start to see messages like this in the simulator logs:
 
 ```
-worker_1  | 2020-08-10 15:03:53,235 INFO  ...  - Suspected Fraud for account id 0x00DD98B2 at Peakhub
-worker_1  | 2020-08-10 15:04:29,997 INFO  ...  - Suspected Fraud for account id 0x00F0AEFA at Overgram
+$ docker-compose logs -f simulator
+
+Attaching to statefun-workshop_simulator_1
+simulator_1      | Suspected Fraud for account id 0x00F3CD51 at Hypergrid for 36 USD
+simulator_1      | Suspected Fraud for account id 0x009D999B at Uparc for 835 USD
 ```
-
-<details>
-<summary>
-Can't use Docker? Click here for a workaround.
-</summary>
-
-Stateful Functions is designed with containers in mind, but it is possible to get this example running without Docker. You'll need a JDK (version 8 or 11), an IDE for Java development, and Python 3. 
-
-For the Python part, you can do this:
-
-```bash
-$ cd statefun-workshop-python
-$ pip install -r requirements.txt
-$ gunicorn -b localhost:8888 -w 4 main:app
-```
-
-Leave the Python web server running, and then bring up Java-based Stateful Functions environment. There's a test you can run that does what's needed, and you can run this test in your IDE: see [RunnerTest](statefun-workshop-functions/src/test/java/com/ververica/statefun/workshop/harness/RunnerTest.java). You will need to first un-ignore this test, and just be aware that it will run continuously until you manually stop it. While it's running, look for output like this in the console:
-
-```
-Suspected Fraud for account id 0x001A0EB6 at Silverspan for 79533 USD
-Suspected Fraud for account id 0x001B9152 at Conow for 91561 USD
-Suspected Fraud for account id 0x0080418E at Corepass for 27660 USD
-Suspected Fraud for account id 0x00CB1AF1 at Coreatlas for 53772 USD
-```
-
-</details>
 
 ## Architecture
 
 ![architecture diagram](images/statefun-workshop.svg)
 
-This Stateful Functions application has two ingresses, one for Transactions (that need to be scored), and another for Transactions that have been confirmed by the customer as having been fraudulent. The egress handles Alert messages for Transactions that have been scored as being possibly fraudulent by the Model.
+This Stateful Functions application is composed of _Remote Functions_ which run in a seperate, stateless container, connected via HTTP. It has two ingresses, one for Transactions (that need to be scored), and another for Transactions that have been confirmed by the customer as having been fraudulent. The egress handles Alert messages for Transactions that have been scored as being possibly fraudulent by the Model.
 
 Incoming Transactions are routed to the TransactionManager, which sends them to both the MerchantFunction (for the relevant Merchant) and to the FraudCount function (for the relevant account). These functions send back feature data that gets packed into a FeatureVector that is then sent to the Model for scoring. The Model responds with a FraudScore that the TransactionManager uses to determine whether or not to create an Alert.
 
@@ -80,19 +57,17 @@ All ConfirmFraud messages are routed to the FraudCount function, which keeps one
 
 The TransactionManager keeps three items of per-transaction state, which are cleared once the transaction has been fully processed.
 
-The MerchantFunction uses an asynchronously connected ProductionMerchantScoreService to provide the score for each Merchant. This mimics the HTTP connection you might have in a real-world application that uses a third-party service to provide enrichment data. The MerchantFunction handles timeouts and retries for the merchant scoring service.
-
-The Model is running as a _Remote Function_ in a separate, stateless container, connected via HTTP.
+The MerchantFunction uses an asynchronously connected MerchantScoreService to provide the score for each Merchant. This mimics the HTTP connection you might have in a real-world application that uses a third-party service to provide enrichment data. The MerchantFunction handles timeouts and retries for the merchant scoring service.
 
 ## Exercises (Python)
 
-The activities in this section can be done without recompiling the Java code or rebuilding the Docker image.
+The activities in this section can be done via the command line.
 
-### Restart the Model
+### Restart the Functions
 
-Since the Model is stateless, and running in its own container, we can redeploy and rescale it independently of the rest of the infrastructure.
+Since the functions are stateless, and running in their own container, we can redeploy and rescale it independently of the rest of the infrastructure.
 
-We can't truly achieve a proper zero-downtime restart of the Python Model without a more elaborate setup, but can do a restart that merely causes the ongoing HTTP requests to be retried.
+We can't truly achieve a proper zero-downtime restart of the functions without a more elaborate setup, but can do a restart that merely causes the ongoing HTTP requests to be retried.
 
 In one terminal window:
 
@@ -103,9 +78,37 @@ $ docker-compose up
 and in another:
 
 ```bash
-$ docker-compose rm -fsv python_model
+$ docker-compose restart python-workder
 $ docker-compose up python_model
 ```
+
+<details>
+<summary>
+Solution
+</summary>
+
+Stateful Function applications seperate compute from the Apache Flink runtime, so functions can be redeployed without any downtime. 
+
+If you search the TaskManager logs, you will find it logged a `RetryableException`, which means the functions were unavailable but the runtime will attempt to reconnect. When Flink is able to reconnect, the log lines will go away.
+
+```bash
+$ docker-compose logs -f worker
+
+worker_1         | 2020-10-13 19:07:15,327 WARN  org.apache.flink.statefun.flink.core.httpfn.RetryingCallback [] - Retriable exception caught while trying to deliver a message: ToFunctionRequestSummary(address=Address(ververica, counter, 0x007B6AB1), batchSize=1, totalSizeInBytes=108, numberOfStates=1)
+worker_1         | java.net.ConnectException: Failed to connect to python-worker/192.168.16.2:8000
+```
+
+Checking the JobManager logs, you will find the application continues to operate without issue and **does not** restart from checkpoint.
+
+```bash
+
+$ docker-compose logs -f master
+
+master_1         | 2020-10-13 19:07:45,548 INFO  org.apache.flink.runtime.checkpoint.CheckpointCoordinator    [] - Triggering checkpoint 11 (type=CHECKPOINT) @ 1602616065531 for job fc1fce4f02097b11cfda8caef36bee9c.
+master_1         | 2020-10-13 19:07:46,153 INFO  org.apache.flink.runtime.checkpoint.CheckpointCoordinator    [] - Completed checkpoint 11 for job fc1fce4f02097b11cfda8caef36bee9c (53147 bytes in 605 ms).
+```
+
+</details>
 
 ### Change the Model
 
