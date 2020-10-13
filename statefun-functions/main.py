@@ -41,7 +41,7 @@ THRESHOLD = 1
 
 
 @functions.bind("ververica/counter")
-def fraud_count(context, message: Union[ConfirmFraud, QueryFraud]):
+def fraud_count(context, message: Union[ConfirmFraud, QueryFraud, ExpireFraud]):
     """
     This function tracks the total number of reported fraudulent transactions made against an account
     on a rolling 30 day period. It supports three message types:
@@ -73,6 +73,7 @@ def fraud_count(context, message: Union[ConfirmFraud, QueryFraud]):
             count = ReportedFraud()
 
         context.pack_and_reply(count)
+
     elif isinstance(message, ExpireFraud):
         raise ValueError("Expire Fraud has not yet been implemented!")
 

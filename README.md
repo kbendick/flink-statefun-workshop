@@ -79,7 +79,6 @@ and in another:
 
 ```bash
 $ docker-compose restart python-workder
-$ docker-compose up python_model
 ```
 
 <details>
@@ -112,7 +111,74 @@ master_1         | 2020-10-13 19:07:46,153 INFO  org.apache.flink.runtime.checkp
 
 ### Change the Model
 
-Now that you know how to redeploy the model without disrupting the pipeline, go ahead and modify and then redeploy the Model by editing `statefun-workshop-python/main.py`. Make a change that will be readily observable in the logging output, such as never scoring any Transactions for more than 1000 USD as fraudulent.
+Now that you know how to redeploy the model without disrupting the pipeline, go ahead and modify and then redeploy the functions by editing `statefun-functions/main.py`. 
+The function `fraud_count` currently increments the count per `Address` forever. 
+Modify the function to maintain a 30 day rolling window, i.e., everytime the count is incremented there should be a corresponding event in 30 days time that decrements it. You can use the `ExpireFraud` type to implement your solution.
+
+<details>
+<summary>
+Hint 1
+</summary>
+
+A function instance can message any other, including itself.
+
+</details>
+
+<details>
+<summary>
+Hint 2
+</summary>
+
+The function `context` contains a method [pack_and_send_after](https://ci.apache.org/projects/flink/flink-statefun-docs-stable/sdk/python.html#sending-delayed-messages) which will send a message that arrives after some duration.
+
+</details>
+
+<details>
+<summary>
+Solution
+</summary>
+
+Everytime a `ConfirmFraud` message is received, the function should send itself a delayed message to decrement the count after 30 days.
+Delayed messages are non-blocking and durable so they function will continue to process messages during that time and the expiration notice is guarunteed to arrive even if the application has to restart from failure. 
+
+```python
+@functions.bind("ververica/counter")
+def fraud_count(context, message: Union[ConfirmFraud, QueryFraud, ExpireFraud]):
+
+    if isinstance(message, ConfirmFraud):
+        count = context.state("fraud_count").unpack(ReportedFraud)
+        if not count:
+            count = ReportedFraud()
+            count.count = 1
+        else:
+            count.count += 1
+
+        context.state("fraud_count").pack(count)
+        context.pack_and_send_after(
+            timedelta(days=30),
+            context.address.typename(),
+            context.address.identity,
+            ExpireFraud())
+
+    elif isinstance(message, QueryFraud):
+        count = context.state("fraud_count").unpack(ReportedFraud)
+
+        if not count:
+            count = ReportedFraud()
+
+        context.pack_and_reply(count)
+
+    elif isinstance(message, ExpireFraud):
+        count = context.state("fraud_count").unpack(ReportedFraud)
+        count.count -= 1
+        
+        if count.count == 0: 
+            del context["fraud_count"]
+        else:
+            context.state("fraud_count").pack(count)
+```
+
+</details>
 
 ## Exercises (Operations)
 
@@ -191,44 +257,54 @@ If you look closely at the logs you will see the savepoint being mentioned, as i
 master_1        | 2020-08-12 10:24:57,982 INFO  org.apache.flink.runtime.checkpoint.CheckpointCoordinator     - Starting job 53a0baf235b4f1db93157079b60f3719 from savepoint /savepoint-dir/savepoint-3df90d-aa82d691740f ()
 ```
 
+## Exercises (Advanced)
+
+This exercise ties together SDK and operational concepts to make a complex change to the application.
+
+After succesfully deploying a Stateful Functions application to production, a new product requirement comes into the team.
+The final score, returned by the model, is judged to be fraudulent if it is greater than a predefined threshold.
+Different accounts have different levels of tolerance for suspicous activity, and users want to have the option to set 
+their own theshold. 
+
+The operations team has made available a Kafka topic called `thresholds` which contains messages for accounts that wish to
+set custom thresholds. The topic key is the `account` and the value is the following schema.
+
+```protobuf
+message CustomThreshold {
+    int32 threshold = 1;
+    string account = 2;
+}
+```
+
+The typeurl for this message is `com.googleapis/workshop.CustomThreshold`.
+
+The transaction manager should be updated to use the accounts custom threshold if one exists, otherwise it should continue to use the default value. Additionally, the application should be updated **statefully**. This means existing function state such as fraud counts and merchant scores should not be lost, and old transactions should not be reprocessed. 
+
 <details>
 <summary>
-If you want to dig in deeper, click here to learn how.
+Hint 1
 </summary>
 
-## Additional Explorations (Java)
+Just like `fraud_count` and `merchant`, we can create an additional function the `transaction manager` can query to get the accounts
+configured threshold.
 
-To fully explore this application, you will also want to be able to modify and recompile the Java code, and to rebuild the Docker image. For this you will need:
+</details>
 
-* a JDK for Java 8 or Java 11 (a JRE is not sufficient; other versions of Java are not supported)
-* Apache Maven 3.x
-* an IDE for Java development, such as IntelliJ or Visual Studio Code
+<details>
+<summary>
+Hint 2
+</summary>
 
-To do this, first modify `docker-compose.yml` by uncommenting the build lines for **both the master and worker services**, which specify 
+The `transaction manager` needs to have a way to query the current threshold. There is a predefined protobuf type `QueryThreshold`
+you can use for this purpose. Its typeurl is `com.googleapis/workshop.QueryThresdhold`.
 
-```yaml
-build: .
-```
-and then rebuild everything via
+</details>
 
-```bash
-$ mvn install
-$ docker-compose build
-```
+<details>
+<summary>
+Hint 3
+</summary>
 
-### Start with a Small Change
-
-Start by making a small change, to verify that you have the basic tool chain working properly. Suggestions:
-
-* Modify the `THRESHOLD` used by the `TransactionManager`.
-* `FraudCount` maintains a rolling count of the `ConfirmFraud` events for each account for the past 30 days. Try changing that to 7 days.
-
-### Add Another Feature to the FeatureVector
-
-Note: Getting this to work involves modifying `statefun-workshop-protocol/src/main/protobuf/entities.proto` and regenerating the protobuf code (via `./generate-protobuf.sh`), which requires you have `protoc` installed. This will be easier to manage if you use the same version of `protoc` that we've used, namely version 3.7.1. 
-
-A simple feature to add would be the merchant string that is already part of the `PersistedValue<Transaction>` stored by the `TransactionManager`. 
-
-A more ambitious feature would be to send the time elapsed since the most recent `ConfirmFraud` for the same account, since this will involve creating a new `PersistedValue` to store the information.
+While the `thresholds` topic already exists, it is not a configured ingress. It needs to be added to the current module defined via `statefun-runtime/module.yaml`.
 
 </details>

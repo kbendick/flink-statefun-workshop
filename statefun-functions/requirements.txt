@@ -12,12 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-<<<<<<< HEAD:statefun-workshop-python/requirements.txt
-apache-flink-statefun==2.1.0
-flask
-=======
+
 apache-flink-statefun==2.2.0
 aiohttp==3.6.2
 flask==1.1.1
->>>>>>> beff749... migrate to python sdk:statefun-functions/requirements.txt
 gunicorn==20.0.4
