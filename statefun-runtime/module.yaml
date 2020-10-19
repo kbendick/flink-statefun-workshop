@@ -40,6 +40,16 @@ module:
       - function:
           meta:
             kind: http
+            type: ververica/merchant
+          spec:
+            endpoint: http://python-worker:8000/statefun
+            states:
+              - merchant_score
+            maxNumBatchRequests: 500
+            timeout: 2min
+      - function:
+          meta:
+            kind: http
             type: ververica/model
           spec:
             endpoint: http://python-worker:8000/statefun
@@ -80,6 +90,18 @@ module:
             topics:
               - topic: confirmed
                 typeUrl: com.googleapis/workshop.ConfirmFraud
+                targets:
+                  - ververica/counter
+      - ingress:
+          meta:
+            type: statefun.kafka.io/routable-protobuf-ingress
+            id: ververica/custom-threshold
+          spec:
+            address: kafka-broker:9092
+            consumerGroupId: custom-threshold-reader
+            topics:
+              - topic: confirmed
+                typeUrl: com.googleapis/workshop.CustomThreshold
                 targets:
                   - ververica/counter
     egresses:

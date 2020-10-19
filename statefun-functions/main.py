@@ -25,6 +25,7 @@ from typing import Union
 
 from entities_pb2 import ConfirmFraud, QueryFraud, ReportedFraud, ExpireFraud
 from entities_pb2 import QueryMerchantScore, MerchantScore, ExpireMerchantScore
+from entities_pb2 import QueryThreshold, CustomThreshold
 
 from entities_pb2 import FraudScore, FeatureVector
 from entities_pb2 import Transaction
@@ -79,7 +80,7 @@ def fraud_count(context, message: Union[ConfirmFraud, QueryFraud, ExpireFraud]):
 
 
 @functions.bind("ververica/merchant")
-def merchant_score(context, message: Union[QueryMerchantScore, ExpireMerchantScore]):
+def merchant_score(context, message: Union[QueryMerchantScore, QueryMerchantThreshold, ExpireMerchantScore]):
     """
     Our application relies on a 3rd party service that returns a trustworthiness score
     for each merchant. This function, when it receives a QueryMerchantScore message will
@@ -118,7 +119,7 @@ def score(context, message: FeatureVector):
 
 
 @functions.bind("ververica/transaction-manager")
-def transaction_manager(context, message: Union[Transaction, ReportedFraud, MerchantScore, FraudScore]):
+def transaction_manager(context, message: Union[Transaction, ReportedFraud, MerchantScore, FraudScore, QueryThreshold]):
     """
     The transaction manager coordinates all communication between the various functions.
     This includes building up the feature vector, calling into the model, and reporting
@@ -132,6 +133,8 @@ def transaction_manager(context, message: Union[Transaction, ReportedFraud, Merc
             "ververica/counter",
             message.account,
             QueryFraud())
+
+        # Add another call to send the merchant threshold
 
         context.pack_and_send(
             "ververica/merchant",
@@ -172,6 +175,9 @@ def transaction_manager(context, message: Union[Transaction, ReportedFraud, Merc
                 transaction.account,
                 vector)
 
+    elif isinstance(message, QueryThreshold):
+        merchant_threshold = context.state("merchant_threshold")
+
     elif isinstance(message, FraudScore):
         if message.score > THRESHOLD:
             transaction = context.state("transaction").unpack(Transaction)
@@ -181,6 +187,10 @@ def transaction_manager(context, message: Union[Transaction, ReportedFraud, Merc
         del context["transaction"]
         del context["fraud_count"]
         del context["merchant_score"]
+
+    elif isinstance(message, QueryThreshold):
+        if context.state("merchant_score")
+
 
 
 #

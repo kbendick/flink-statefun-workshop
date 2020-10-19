@@ -75,7 +75,7 @@ message MerchantScore {
 // to query the external service for the trustworthiness score
 // of a merchant.
 message QueryMerchantScore {
-
+    string merchant = 1;
 }
 
 // This message is sent to an instance of a MerchantFunction
@@ -97,5 +97,5 @@ message CustomThreshold {
 // the current threshold for a given
 // account.
 message QueryThreshold {
-
+    string account = 1;
 }
