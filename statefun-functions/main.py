@@ -77,6 +77,7 @@ def fraud_count(context, message: Union[ConfirmFraud, QueryFraud, ExpireFraud]):
         raise ValueError("Expire Fraud has not yet been implemented!")
 
 
+
 @functions.bind("ververica/merchant")
 def merchant_score(context, message: Union[QueryMerchantScore, ExpireMerchantScore]):
     """
